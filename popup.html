@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; width: 268px; background: #0e1013; color: #e7edf3;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      .wrap { padding: 14px 16px 16px; }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      p.sub { margin: 0 0 14px; color: #9a9ba0; font-size: 12px; }
+      .toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #16181d; border: 1px solid #23252a; border-radius: 10px; }
+      .toggle b { font-size: 13px; }
+      /* iOS-style switch */
+      .switch { position: relative; width: 40px; height: 22px; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider { position: absolute; inset: 0; background: #3a3c42; border-radius: 999px; transition: .15s; cursor: pointer; }
+      .slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .15s; }
+      input:checked + .slider { background: #5e6ad2; }
+      input:checked + .slider::before { transform: translateX(18px); }
+      .account-row { margin-top: 8px; padding: 10px 12px; background: #16181d; border: 1px solid #23252a; border-radius: 10px; }
+      .account-row label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #8b8d94; font-weight: 600; margin-bottom: 5px; }
+      .account-row select { width: 100%; box-sizing: border-box; background: #0e1013; color: #e7edf3; border: 1px solid #2a2c30; border-radius: 8px; padding: 6px 8px; font: inherit; }
+      .account-row select:focus { outline: none; border-color: #5e6ad2; }
+      .status { margin-top: 12px; font-size: 12px; color: #9a9ba0; }
+      .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+      .dot.on { background: #7ee7a8; }
+      .dot.off { background: #f5a559; }
+      .kbd { font: 11px ui-monospace, Menlo, monospace; background: #16181d; border: 1px solid #23252a; border-radius: 5px; padding: 1px 5px; color: #c4c5cb; }
+      button.link { margin-top: 14px; width: 100%; background: none; color: #8b93e6; border: 1px solid #2a2c30; border-radius: 8px; padding: 8px; font: inherit; cursor: pointer; }
+      button.link:hover { background: #16181d; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Shift-Click Issue Filer</h1>
+      <p class="sub">Hold <span class="kbd">Shift</span> and click any element to file an issue.</p>
+
+      <div class="toggle">
+        <b>Inspector</b>
+        <label class="switch">
+          <input type="checkbox" id="enabled" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle" style="margin-top: 8px;">
+        <b>Review bar</b>
+        <label class="switch">
+          <input type="checkbox" id="review" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="account-row" id="accountRow" style="display: none;">
+        <label for="account">Account</label>
+        <select id="account"></select>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <button class="link" id="settings">Settings</button>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

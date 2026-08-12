@@ -1,0 +1,13 @@
+<%# Render this partial in your layout <head> with: render "page_inspector/meta"
+    (keep no closing ERB delimiter in this comment — it would end the comment early).
+    It emits the controller#action + source-file meta tags the Shift-Click Issue
+    Filer extension reads. The view/partial chain comes for free from Rails'
+    annotate_rendered_view_with_filenames, which the PageInspector engine turns
+    on in development. Both are dev-only concerns — the tags are only emitted when
+    annotations are on, so nothing here ships to production unless you opt in with
+    PAGE_INSPECTOR_ANNOTATE=1. %>
+<% if Rails.application.config.action_view.annotate_rendered_view_with_filenames %>
+  <meta name="dev-controller" content="<%= page_inspector_controller_label %>">
+  <meta name="dev-controller-file" content="<%= page_inspector_controller_file %>">
+  <meta name="dev-app-name" content="<%= page_inspector_app_name %>">
+<% end %>

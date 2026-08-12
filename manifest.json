@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "Shift-Click Issue Filer",
+  "version": "1.9.1",
+  "description": "Hold Shift and click any element to capture it — with a screenshot, DOM path, Rails view/partial chain, controller and key computed styles. Stack elements across pages, then file them as an issue or copy them onto a mood board in any of your workspace accounts.",
+  "permissions": ["storage", "unlimitedStorage", "desktopCapture", "clipboardWrite"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Shift-Click Issue Filer",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/shared.js", "content/inspector.js", "content/review_bar.js", "content/component_tagger.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "toggle-inspector": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "Toggle the shift-click issue inspector on/off"
+    },
+    "toggle-review-bar": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Toggle the review bar (mark up & comments) on/off"
+    },
+    "toggle-tagger": {
+      "suggested_key": {
+        "default": "Alt+Shift+C"
+      },
+      "description": "Tag an element as the component@variant it must render"
+    }
+  }
+}
