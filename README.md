@@ -78,7 +78,9 @@ Click the extension icon → **Settings**:
 
 - **Workspace URL** — already filled in with `https://amplifier.app`. Only
   change it if you run your own Amplifier workspace, in which case use its base
-  URL with no trailing path.
+  URL with no trailing path. It is the workspace your issues live in, *not* the
+  site you're inspecting: point it at a dev server and its index page comes back
+  instead of the API, which **Connect & save** will tell you.
 - **API token** — copy it from **Settings → MCP Connection** in your workspace.
   It's the same token the MCP server uses. The token is user-level, so it
   reaches every account you belong to; pick the account in the composer when you
@@ -347,7 +349,8 @@ curl -s https://amplifier.app/inspector/reviews \
 | `content/` | The content scripts: `shared.js` (capture machinery), `inspector.js` (shift-click + composer), `review_bar.js`, `component_tagger.js`. |
 | `popup.html` / `options.html` | The toolbar popup (on/off, account switcher) and the settings page (workspace URL + token). |
 | `icons/`, `sounds/` | Toolbar icons and the clipboard chime. |
-| `test/` | Node smoke tests for the background worker — `node test/create_issue_prompt_test.mjs`. No dependencies; stubs the `chrome.*` APIs and a fake workspace. |
+| `test/` | Node smoke tests — `for t in test/*_test.mjs; do node "$t"; done`. No dependencies; they stub the `chrome.*` APIs, the DOM and a fake workspace. |
+| `api.js` | Shared by the options page and the worker: normalizes the workspace URL you type and turns every response into JSON *or* a sentence. Nothing else calls `res.json()`. |
 | `rails-lib/page_inspector/` | A drop-in Rails engine so **any** Rails app exposes its controller + view/partial info to the extension. Not part of the extension itself. |
 | `docs/REVIEW_BAR_DESIGN.md` | The review bar's architecture and rationale. |
 

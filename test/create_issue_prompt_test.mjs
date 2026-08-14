@@ -21,18 +21,25 @@ const listeners = []
 
 const sandbox = {
   console,
+  URL,
+  URLSearchParams,
+  // The worker pulls in api.js the way a classic service worker does.
+  importScripts: (file) => vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), sandbox),
   fetch: async (url, init) => {
     lastRequest = {url, body: JSON.parse(init.body)}
+    const payload = {
+      ok: true,
+      identifier: "STR-1465",
+      url: "https://amplifier.app/issues/STR-1465",
+      // Mirror the server: the prompt is only rendered when asked for.
+      ...(lastRequest.body.include_prompt ? {prompt: "Work on issue STR-1465…"} : {})
+    }
     return {
       ok: true,
       status: 200,
-      json: async () => ({
-        ok: true,
-        identifier: "STR-1465",
-        url: "https://amplifier.app/issues/STR-1465",
-        // Mirror the server: the prompt is only rendered when asked for.
-        ...(lastRequest.body.include_prompt ? {prompt: "Work on issue STR-1465…"} : {})
-      })
+      url,
+      headers: {get: (name) => (name.toLowerCase() === "content-type" ? "application/json; charset=utf-8" : null)},
+      text: async () => JSON.stringify(payload)
     }
   },
   chrome: {

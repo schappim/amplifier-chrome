@@ -33,6 +33,10 @@
 // { enabled, baseUrl, token, accountId, accounts, team, teams, labels,
 //   lastProject, lastLabel, lastUsed }.
 
+// Endpoint building (endpointFor) and response parsing (apiCall) are shared
+// with the options page.
+importScripts("api.js")
+
 // Where issues are filed unless the user points the extension somewhere else in
 // Settings. Amplifier's hosted workspace is the default so a fresh install only
 // has to paste a token; self-hosters overwrite it with their own base URL.
@@ -172,13 +176,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 })
 
-// Append the selected account to an endpoint URL. Requests without a selection
-// let the server fall back to the token's default account.
-function withAccount(endpoint, accountId) {
-  if (!accountId) return endpoint
-  return endpoint + (endpoint.includes("?") ? "&" : "?") + "account_id=" + encodeURIComponent(accountId)
-}
-
 // Select another of the user's workspace accounts (same connection, same
 // token): restore that account's remembered last-used picks, drop the previous
 // account's cached picker lists, then re-ping the workspace scoped to it to
@@ -218,22 +215,9 @@ async function switchAccount(payload) {
 }
 
 async function pingWorkspace(baseUrl, token, accountId) {
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/ping", accountId)
-  try {
-    const res = await fetch(endpoint, {
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) return {ok: true, data}
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  return apiCall(endpointFor(baseUrl, "/inspector/ping", accountId), {
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
 }
 
 // Remember the team, project and label an issue/review was just filed with, so
@@ -294,52 +278,39 @@ async function createIssue(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = baseUrl.replace(/\/+$/, "") + "/inspector/issues"
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        account_id: accountId || null,
-        title: payload.title,
-        note: payload.note || null, // the user's free-text instruction for the AI
-        team: payload.team || team || "",
-        project: payload.project || null,
-        label: payload.label || null,
-        // Ask for the filed issue rendered as a prompt, so the composer can put
-        // it on the clipboard instead of sending the user to the issue page.
-        include_prompt: payload.includePrompt === true,
-        // The stacked-capture shape. Legacy single-capture fields are still sent
-        // as a fallback for older callers / the curl example.
-        captures: payload.captures || null,
-        body: payload.body || null,
-        url: payload.url || null,
-        image: payload.image || null
-      })
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/issues"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      account_id: accountId || null,
+      title: payload.title,
+      note: payload.note || null, // the user's free-text instruction for the AI
+      team: payload.team || team || "",
+      project: payload.project || null,
+      label: payload.label || null,
+      // Ask for the filed issue rendered as a prompt, so the composer can put
+      // it on the clipboard instead of sending the user to the issue page.
+      include_prompt: payload.includePrompt === true,
+      // The stacked-capture shape. Legacy single-capture fields are still sent
+      // as a fallback for older callers / the curl example.
+      captures: payload.captures || null,
+      body: payload.body || null,
+      url: payload.url || null,
+      image: payload.image || null
     })
+  })
+  if (!result.ok) return result
 
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-
-    if (res.ok && data.ok) {
-      // Remember where this issue was filed — team, project and label — so the
-      // composer preselects the same next time (including an explicit
-      // "No project" / "No label").
-      await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
-      return {ok: true, identifier: data.identifier, url: data.url, prompt: data.prompt || null}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  // Remember where this issue was filed — team, project and label — so the
+  // composer preselects the same next time (including an explicit
+  // "No project" / "No label").
+  await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
+  const data = result.data
+  return {ok: true, identifier: data.identifier, url: data.url, prompt: data.prompt || null}
 }
 
 // POST a review-bar session to the workspace: files one issue from the
@@ -352,46 +323,33 @@ async function sendReview(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = baseUrl.replace(/\/+$/, "") + "/inspector/reviews"
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        account_id: accountId || null,
-        title: payload.title || null,
-        note: payload.note || null,
-        team: payload.team || team || "",
-        project: payload.project || null,
-        label: payload.label || null,
-        send_to_claude: payload.sendToClaude !== false,
-        // "Copy for Claude Code" asks for the rendered prompt back so the
-        // content script can put it (with hosted image URLs) on the clipboard.
-        include_prompt: payload.includePrompt === true,
-        items: payload.items || []
-      })
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/reviews"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      account_id: accountId || null,
+      title: payload.title || null,
+      note: payload.note || null,
+      team: payload.team || team || "",
+      project: payload.project || null,
+      label: payload.label || null,
+      send_to_claude: payload.sendToClaude !== false,
+      // "Copy for Claude Code" asks for the rendered prompt back so the
+      // content script can put it (with hosted image URLs) on the clipboard.
+      include_prompt: payload.includePrompt === true,
+      items: payload.items || []
     })
+  })
+  if (!result.ok) return result
 
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-
-    if (res.ok && data.ok) {
-      // Remember the team/project/label for next time, like the issue composer.
-      await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
-      return {ok: true, identifier: data.identifier, url: data.url, sent: Boolean(data.sent), prompt: data.prompt || null}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  // Remember the team/project/label for next time, like the issue composer.
+  await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
+  const data = result.data
+  return {ok: true, identifier: data.identifier, url: data.url, sent: Boolean(data.sent), prompt: data.prompt || null}
 }
 
 // Mint an OpenAI Realtime ephemeral secret from the workspace so the composer's
@@ -404,23 +362,12 @@ async function mintRealtimeToken() {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/realtime_token", accountId)
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) return {ok: true, token: data.token}
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/realtime_token", accountId), {
+    method: "POST",
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
+  if (!result.ok) return result
+  return {ok: true, token: result.data.token}
 }
 
 // Complete the WebRTC handshake with OpenAI on the content script's behalf: POST
@@ -457,30 +404,18 @@ async function listProjects() {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/projects", accountId)
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/projects", accountId), {
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
+  if (!result.ok) return result
+
+  const projects = result.data.projects || []
   try {
-    const res = await fetch(endpoint, {
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) {
-      const projects = data.projects || []
-      try {
-        await chrome.storage.sync.set({projects})
-      } catch (_e) {
-        /* best effort cache */
-      }
-      return {ok: true, projects}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
+    await chrome.storage.sync.set({projects})
+  } catch (_e) {
+    /* best effort cache */
   }
+  return {ok: true, projects}
 }
 
 // GET the project's component catalog so the element tagger can offer a
@@ -493,23 +428,12 @@ async function listComponents(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const query = payload?.project ? `?project=${encodeURIComponent(payload.project)}` : ""
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/components" + query, accountId)
-  try {
-    const res = await fetch(endpoint, {
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) return {ok: true, project: data.project, components: data.components || []}
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  const query = payload?.project ? {project: payload.project} : null
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/components", accountId, query), {
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
+  if (!result.ok) return result
+  return {ok: true, project: result.data.project, components: result.data.components || []}
 }
 
 // POST the tag: bind this GUI spot to the component@variant it must render.
@@ -521,35 +445,25 @@ async function tagElement(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = baseUrl.replace(/\/+$/, "") + "/inspector/component_instances"
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        account_id: accountId || null,
-        project: payload.project || null,
-        component: payload.component,
-        variant: payload.variant || null,
-        location: payload.location,
-        url: payload.url || null
-      })
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/component_instances"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      account_id: accountId || null,
+      project: payload.project || null,
+      component: payload.component,
+      variant: payload.variant || null,
+      location: payload.location,
+      url: payload.url || null
     })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) return {ok: true, message: data.message, drift: data.drift, instance: data.instance}
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  })
+  if (!result.ok) return result
+  const data = result.data
+  return {ok: true, message: data.message, drift: data.drift, instance: data.instance}
 }
 
 // POST an element from the running page as a component: its markup, its computed
@@ -561,38 +475,28 @@ async function captureComponent(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = baseUrl.replace(/\/+$/, "") + "/inspector/components"
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        account_id: accountId || null,
-        project: payload.project || null,
-        name: payload.name,
-        markup: payload.markup,
-        styles: payload.styles || {},
-        location: payload.location || null,
-        url: payload.url || null,
-        template_path: payload.templatePath || null,
-        code_path: payload.codePath || null
-      })
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/components"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      account_id: accountId || null,
+      project: payload.project || null,
+      name: payload.name,
+      markup: payload.markup,
+      styles: payload.styles || {},
+      location: payload.location || null,
+      url: payload.url || null,
+      template_path: payload.templatePath || null,
+      code_path: payload.codePath || null
     })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) return {ok: true, message: data.message, created: data.created, component: data.component}
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  })
+  if (!result.ok) return result
+  const data = result.data
+  return {ok: true, message: data.message, created: data.created, component: data.component}
 }
 
 // GET the account's labels so the composer can keep its picker current. Caches
@@ -603,30 +507,18 @@ async function listLabels() {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/labels", accountId)
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/labels", accountId), {
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
+  if (!result.ok) return result
+
+  const labels = result.data.labels || []
   try {
-    const res = await fetch(endpoint, {
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) {
-      const labels = data.labels || []
-      try {
-        await chrome.storage.sync.set({labels})
-      } catch (_e) {
-        /* best effort cache */
-      }
-      return {ok: true, labels}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
+    await chrome.storage.sync.set({labels})
+  } catch (_e) {
+    /* best effort cache */
   }
+  return {ok: true, labels}
 }
 
 // GET the account's mood boards so the composer can offer a picker. Caches the
@@ -637,30 +529,18 @@ async function listMoodBoards() {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = withAccount(baseUrl.replace(/\/+$/, "") + "/inspector/mood_boards", accountId)
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/mood_boards", accountId), {
+    headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
+  })
+  if (!result.ok) return result
+
+  const boards = result.data.mood_boards || []
   try {
-    const res = await fetch(endpoint, {
-      headers: {Authorization: `Bearer ${token}`, Accept: "application/json"}
-    })
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-    if (res.ok && data.ok) {
-      const boards = data.mood_boards || []
-      try {
-        await chrome.storage.sync.set({moodBoards: boards})
-      } catch (_e) {
-        /* best effort cache */
-      }
-      return {ok: true, moodBoards: boards}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
+    await chrome.storage.sync.set({moodBoards: boards})
+  } catch (_e) {
+    /* best effort cache */
   }
+  return {ok: true, moodBoards: boards}
 }
 
 // Read a bundled sound effect (sounds/*.mp3) and hand its bytes back base64'd.
@@ -703,35 +583,21 @@ async function addToMoodBoard(payload) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
 
-  const endpoint = baseUrl.replace(/\/+$/, "") + "/inspector/mood_boards"
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({
-        account_id: accountId || null,
-        board_id: payload.boardId || null,
-        board_name: payload.boardName || null,
-        captures: payload.captures || null
-      })
+  const result = await apiCall(endpointFor(baseUrl, "/inspector/mood_boards"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    body: JSON.stringify({
+      account_id: accountId || null,
+      board_id: payload.boardId || null,
+      board_name: payload.boardName || null,
+      captures: payload.captures || null
     })
-
-    let data = {}
-    try {
-      data = await res.json()
-    } catch (_e) {
-      /* non-JSON error body */
-    }
-
-    if (res.ok && data.ok) {
-      return {ok: true, moodBoard: data.mood_board, added: data.added, url: data.url}
-    }
-    return {ok: false, error: data.error || `Request failed (HTTP ${res.status})`}
-  } catch (e) {
-    return {ok: false, error: `Could not reach ${endpoint}: ${e.message}`}
-  }
+  })
+  if (!result.ok) return result
+  const data = result.data
+  return {ok: true, moodBoard: data.mood_board, added: data.added, url: data.url}
 }

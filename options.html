@@ -50,7 +50,7 @@
       <div class="field">
         <label for="baseUrl">Workspace URL</label>
         <input type="text" id="baseUrl" placeholder="https://amplifier.app" autocomplete="off" spellcheck="false" />
-        <div class="hint">Where your issues live. Leave it on <code>https://amplifier.app</code> unless you run your own workspace, in which case use its base URL (no trailing path).</div>
+        <div class="hint">Where your issues live — <b>not</b> the site you're inspecting. Leave it on <code>https://amplifier.app</code> unless you run your own workspace, in which case use its base URL (no trailing path).</div>
       </div>
 
       <div class="field">
@@ -74,6 +74,7 @@
       <div class="status" id="status"></div>
     </div>
 
+    <script src="api.js"></script>
     <script src="options.js"></script>
   </body>
 </html>
