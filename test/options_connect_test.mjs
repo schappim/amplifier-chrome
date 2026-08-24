@@ -1,7 +1,7 @@
 // What happens on the options page when "Connect & save" reaches something
 // that isn't the workspace. Run with:
 //
-//   node extensions/chrome/test/options_connect_test.mjs
+//   node test/options_connect_test.mjs
 //
 // The reported failure: a URL that answers 200 with an HTML page (a local dev
 // server serving its index.html for every path, a tunnel interstitial, a
@@ -53,9 +53,16 @@ function makeDocument() {
 }
 
 // Load api.js + options.js the way options.html does, over one fake workspace.
-async function load({fetch, storage = {}}) {
+// chrome.storage.get takes either a defaults object or a list of keys.
+const read = (area, defaults) =>
+  Array.isArray(defaults)
+    ? Object.fromEntries(defaults.filter((k) => k in area).map((k) => [k, area[k]]))
+    : Object.fromEntries(Object.keys(defaults).map((k) => [k, area[k] ?? defaults[k]]))
+
+async function load({fetch, storage = {}, cached = {}}) {
   const document = makeDocument()
   const store = {...storage}
+  const cache = {...cached}
   const rejections = []
   const sandbox = {
     console,
@@ -66,8 +73,13 @@ async function load({fetch, storage = {}}) {
     chrome: {
       storage: {
         sync: {
-          get: async (defaults) => Object.fromEntries(Object.keys(defaults).map((k) => [k, store[k] ?? defaults[k]])),
+          get: async (defaults) => read(store, defaults),
           set: async (values) => Object.assign(store, values)
+        },
+        // The workspace lists are cached here, not in sync (see api.js).
+        local: {
+          get: async (defaults) => read(cache, defaults),
+          set: async (values) => Object.assign(cache, values)
         }
       }
     }
@@ -78,7 +90,7 @@ async function load({fetch, storage = {}}) {
     vm.runInContext(fs.readFileSync(path.join(root, file), "utf8"), sandbox)
   }
   await new Promise((resolve) => setImmediate(resolve)) // let restore() settle
-  return {document, store, rejections}
+  return {document, store, cache, rejections}
 }
 
 const html = (url) => ({
@@ -124,7 +136,7 @@ const workspace = {ok: true, account: "Ninja", account_id: 7, accounts: [{id: 7,
 //    the extension's own origin (where it silently 404s).
 {
   const calls = []
-  const {document, store} = await load({
+  const {document, store, cache} = await load({
     fetch: async (url) => {
       calls.push(url)
       return json(url, 200, workspace)
@@ -138,6 +150,12 @@ const workspace = {ok: true, account: "Ninja", account_id: 7, accounts: [{id: 7,
   assert(store.baseUrl === "https://amplifier.app", `the saved URL should be normalized, got ${JSON.stringify(store.baseUrl)}`)
   assert(document.elements.baseUrl.value === "https://amplifier.app", "the field should show what was saved")
   assert(/Connected to/.test(document.elements.status.textContent), `should report success, got ${JSON.stringify(document.elements.status.textContent)}`)
+  // The lists are a cache, and sync caps each item at 8KB — they belong in
+  // local. Writing them to sync is what broke switching accounts.
+  assert(cache.teams?.length === 1, `the team list should be cached in local, got ${JSON.stringify(cache.teams)}`)
+  for (const key of ["accounts", "teams", "projects", "labels", "moodBoards"]) {
+    assert(!(key in store), `${key} must not be written to sync`)
+  }
 }
 
 // 3. A URL copied out of the app carries a page path; fall back to the site

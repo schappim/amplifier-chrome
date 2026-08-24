@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Shift-Click Issue Filer",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Hold Shift and click any element to capture it — with a screenshot, DOM path, Rails view/partial chain, controller and key computed styles. Stack elements across pages, then file them as an issue or copy them onto a mood board in any of your workspace accounts.",
   "permissions": ["storage", "unlimitedStorage", "desktopCapture", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],

@@ -1,6 +1,6 @@
 // Round-trip check for the background worker's CREATE_ISSUE handler, run with:
 //
-//   node extensions/chrome/test/create_issue_prompt_test.mjs
+//   node test/create_issue_prompt_test.mjs
 //
 // The worker builds its request body from an explicit field list, so a payload
 // field the composer sends is silently dropped if it isn't named there — which
@@ -57,7 +57,7 @@ const sandbox = {
         set: async (values) => Object.assign(store, values),
         remove: async () => {}
       },
-      local: {get: async (defaults) => defaults, set: async () => {}},
+      local: {get: async (defaults) => (Array.isArray(defaults) ? {} : defaults), set: async () => {}},
       onChanged: {addListener() {}}
     },
     action: {setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}},

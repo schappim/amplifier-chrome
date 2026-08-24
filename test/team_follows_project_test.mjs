@@ -18,19 +18,29 @@ import path from "path"
 const root = path.resolve(import.meta.dirname, "..")
 
 let lastRequest = null
+// The settings (chrome.storage.sync)…
 const store = {
   baseUrl: "https://amplifier.app",
   token: "tok",
   team: "HOM", // the stored default — the wrong answer once a project is picked
   accountId: "7",
-  lastUsed: {},
-  // The picker cache the worker consults, in the ping's shape.
+  lastUsed: {}
+}
+// …and the picker cache the worker consults (chrome.storage.local), in the
+// ping's shape. The lists live here because sync caps each item at 8KB.
+const cache = {
   projects: [
     {id: 154, name: "Getting Started [Desktop]", team: "STR", icon: null},
     {id: 12, name: "Groceries", team: "HOM", icon: null}
   ]
 }
 const listeners = []
+
+// chrome.storage.get takes either a defaults object or a list of keys.
+const readFrom = (area, defaults) =>
+  Array.isArray(defaults)
+    ? Object.fromEntries(defaults.filter((k) => k in area).map((k) => [k, area[k]]))
+    : Object.fromEntries(Object.keys(defaults).map((k) => [k, area[k] ?? defaults[k]]))
 
 const sandbox = {
   console,
@@ -58,11 +68,14 @@ const sandbox = {
     },
     storage: {
       sync: {
-        get: async (defaults) => Object.fromEntries(Object.keys(defaults).map((k) => [k, store[k] ?? defaults[k]])),
+        get: async (defaults) => readFrom(store, defaults),
         set: async (values) => Object.assign(store, values),
         remove: async () => {}
       },
-      local: {get: async (defaults) => defaults, set: async () => {}},
+      local: {
+        get: async (defaults) => readFrom(cache, defaults),
+        set: async (values) => Object.assign(cache, values)
+      },
       onChanged: {addListener() {}}
     },
     action: {setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {}},

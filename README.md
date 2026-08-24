@@ -365,7 +365,7 @@ curl -s https://amplifier.app/inspector/reviews \
 | Permission | Why |
 | --- | --- |
 | `host_permissions: <all_urls>` | You can shift-click an element on *any* site — the point of the "make this look like that" workflow is grabbing references from anywhere. |
-| `storage`, `unlimitedStorage` | Holds your settings and the capture stack (screenshots are big, hence unlimited). |
+| `storage`, `unlimitedStorage` | Holds your settings, your workspace's team/project/label lists and the capture stack (screenshots are big, hence unlimited). |
 | `desktopCapture` | The "Capture console" button, which screenshots a region of your screen. |
 | `clipboardWrite` | Puts the filed issue's prompt on your clipboard. |
 

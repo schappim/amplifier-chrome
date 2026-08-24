@@ -20,45 +20,31 @@
 // requests aren't subject to the page's CORS (the extension holds
 // host_permissions for the target).
 //
-// Config lives in chrome.storage.sync. The API token is user-level, so ONE
+// Settings live in chrome.storage.sync; the cached picker lists live in
+// chrome.storage.local (see the storage-layout note in api.js — sync caps each
+// item at 8KB and the lists outgrow it). The API token is user-level, so ONE
 // connection (baseUrl + token) reaches every workspace account the user
 // belongs to: `accounts` is the server-reported list (from /inspector/ping)
 // and `accountId` is the one currently selected — sent as account_id on every
-// request. The flat keys — team, the cached picker lists
+// request. The selected account's working set — team, the cached lists
 // (teams/projects/labels/moodBoards) and the last-used picks
-// (lastProject/lastLabel) — are the SELECTED account's working set, refreshed
-// on every switch; `lastUsed` keeps each account's picks so switching back
-// restores them.
+// (lastProject/lastLabel) — is refreshed on every switch; `lastUsed` keeps each
+// account's picks so switching back restores them.
 //
-// { enabled, baseUrl, token, accountId, accounts, team, teams, labels,
-//   lastProject, lastLabel, lastUsed }.
+// sync:  { enabled, baseUrl, token, accountId, team, lastProject, lastLabel,
+//          lastUsed }
+// local: { accounts, teams, projects, labels, moodBoards }.
 
 // Endpoint building (endpointFor) and response parsing (apiCall) are shared
 // with the options page.
 importScripts("api.js")
 
-// Where issues are filed unless the user points the extension somewhere else in
-// Settings. Amplifier's hosted workspace is the default so a fresh install only
-// has to paste a token; self-hosters overwrite it with their own base URL.
-const DEFAULT_BASE_URL = "https://amplifier.app"
-
-const DEFAULTS = {
-  enabled: true,
-  baseUrl: DEFAULT_BASE_URL,
-  token: "",
-  accountId: "",
-  accounts: [],
-  team: "",
-  teams: [],
-  labels: [],
-  lastProject: "",
-  lastLabel: "",
-  lastUsed: {}
-}
-
 chrome.runtime.onInstalled.addListener(async () => {
-  const current = await chrome.storage.sync.get({...DEFAULTS, activeAccountId: ""})
-  const merged = {...DEFAULTS, ...current}
+  // Lists cached into sync by an older version have to come out before
+  // anything writes sync again — they're what breaches the per-item quota.
+  await migrateWorkspaceCache()
+  const current = await chrome.storage.sync.get({...SETTING_DEFAULTS, activeAccountId: ""})
+  const merged = {...SETTING_DEFAULTS, ...current}
   // Migrate the short-lived per-account-token shape (1.7.0), where each
   // accounts entry carried its own connection: adopt the active entry's
   // connection and let the server rebuild the account list from the token.
@@ -71,9 +57,9 @@ chrome.runtime.onInstalled.addListener(async () => {
       team: active.team || "",
       lastProject: active.lastProject || "",
       lastLabel: active.lastLabel || "",
-      accounts: [],
       accountId: ""
     })
+    await saveWorkspaceCache({accounts: []})
   }
   delete merged.activeAccountId
   await chrome.storage.sync.set(merged)
@@ -81,12 +67,16 @@ chrome.runtime.onInstalled.addListener(async () => {
   refreshBadge()
   // A configured extension that predates the account picker has no account
   // list yet — fetch it so the pickers can offer it straight away.
-  if (merged.baseUrl && merged.token && !merged.accounts.length) {
+  const {accounts} = await chrome.storage.local.get({accounts: []})
+  if (merged.baseUrl && merged.token && !accounts.length) {
     await switchAccount({id: merged.accountId})
   }
 })
 
-chrome.runtime.onStartup?.addListener(refreshBadge)
+chrome.runtime.onStartup?.addListener(async () => {
+  await migrateWorkspaceCache()
+  refreshBadge()
+})
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.enabled) refreshBadge()
@@ -181,6 +171,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // account's cached picker lists, then re-ping the workspace scoped to it to
 // repopulate them (and refresh the account list itself). A failed ping still
 // switches — the composer refetches the lists when it next opens.
+//
+// The picks are settings (sync); the lists are a cache (local). Writing the
+// lists to sync is what used to fail here with "Resource::kQuotaBytesPerItem
+// quota exceeded" on any workspace big enough to matter.
 async function switchAccount(payload) {
   const id = payload?.id != null ? String(payload.id) : ""
   const {baseUrl, token, lastUsed} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", lastUsed: {}})
@@ -193,25 +187,24 @@ async function switchAccount(payload) {
     accountId: id,
     team: last.team || "",
     lastProject: last.project || "",
-    lastLabel: last.label || "",
-    teams: [],
-    projects: [],
-    labels: [],
-    moodBoards: []
+    lastLabel: last.label || ""
   })
+  await saveWorkspaceCache({teams: [], projects: [], labels: [], moodBoards: []})
 
   const ping = await pingWorkspace(baseUrl, token, id)
   if (!ping.ok) return {ok: true, warning: ping.error}
 
   await chrome.storage.sync.set({
-    accountId: ping.data.account_id != null ? String(ping.data.account_id) : id,
+    accountId: ping.data.account_id != null ? String(ping.data.account_id) : id
+  })
+  const cached = await saveWorkspaceCache({
     accounts: ping.data.accounts || [],
     teams: ping.data.teams || [],
     projects: ping.data.projects || [],
     labels: ping.data.labels || [],
     moodBoards: ping.data.mood_boards || []
   })
-  return {ok: true, account: ping.data.account, user: ping.data.user}
+  return {ok: true, account: ping.data.account, user: ping.data.user, warning: cached.ok ? undefined : cached.error}
 }
 
 async function pingWorkspace(baseUrl, token, accountId) {
@@ -285,7 +278,10 @@ function teamForProject(projectId, projects) {
 }
 
 async function createIssue(payload) {
-  const {baseUrl, token, team, accountId, projects} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: "", projects: []})
+  const {baseUrl, token, team, accountId, projects} = await loadConfig(
+    {baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: ""},
+    {projects: []}
+  )
   if (!baseUrl || !token) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
@@ -335,7 +331,10 @@ async function createIssue(payload) {
 // connected Claude Code session via the channel. The response's `sent` flag
 // tells the bar whether a channel actually received it.
 async function sendReview(payload) {
-  const {baseUrl, token, team, accountId, projects} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: "", projects: []})
+  const {baseUrl, token, team, accountId, projects} = await loadConfig(
+    {baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: ""},
+    {projects: []}
+  )
   if (!baseUrl || !token) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
@@ -418,7 +417,7 @@ async function realtimeSdpExchange(payload) {
 }
 
 // GET the account's active projects so the composer can keep its picker current
-// (and show each project's emoji). Caches the list into chrome.storage.sync so
+// (and show each project's emoji). Caches the list into chrome.storage.local so
 // it's available immediately next time, mirroring listMoodBoards.
 async function listProjects() {
   const {baseUrl, token, accountId} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", accountId: ""})
@@ -432,11 +431,7 @@ async function listProjects() {
   if (!result.ok) return result
 
   const projects = result.data.projects || []
-  try {
-    await chrome.storage.sync.set({projects})
-  } catch (_e) {
-    /* best effort cache */
-  }
+  await saveWorkspaceCache({projects})
   return {ok: true, projects}
 }
 
@@ -522,7 +517,7 @@ async function captureComponent(payload) {
 }
 
 // GET the account's labels so the composer can keep its picker current. Caches
-// the list into chrome.storage.sync so it's available immediately next time.
+// the list into chrome.storage.local so it's available immediately next time.
 async function listLabels() {
   const {baseUrl, token, accountId} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", accountId: ""})
   if (!baseUrl || !token) {
@@ -535,16 +530,12 @@ async function listLabels() {
   if (!result.ok) return result
 
   const labels = result.data.labels || []
-  try {
-    await chrome.storage.sync.set({labels})
-  } catch (_e) {
-    /* best effort cache */
-  }
+  await saveWorkspaceCache({labels})
   return {ok: true, labels}
 }
 
 // GET the account's mood boards so the composer can offer a picker. Caches the
-// list into chrome.storage.sync so it's available immediately next time.
+// list into chrome.storage.local so it's available immediately next time.
 async function listMoodBoards() {
   const {baseUrl, token, accountId} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", accountId: ""})
   if (!baseUrl || !token) {
@@ -557,11 +548,7 @@ async function listMoodBoards() {
   if (!result.ok) return result
 
   const boards = result.data.mood_boards || []
-  try {
-    await chrome.storage.sync.set({moodBoards: boards})
-  } catch (_e) {
-    /* best effort cache */
-  }
+  await saveWorkspaceCache({moodBoards: boards})
   return {ok: true, moodBoards: boards}
 }
 

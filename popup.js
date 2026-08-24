@@ -1,10 +1,9 @@
 // Popup: quick on/off toggle + account switcher + connection status + link to
 // settings. The account list comes from the workspace (the API token is
-// user-level); switching goes through the background worker (SWITCH_ACCOUNT),
-// which restores that account's last-used picks and refreshes the pickers.
-
-// Keep in sync with background.js.
-const DEFAULT_BASE_URL = "https://amplifier.app"
+// user-level) and is cached in chrome.storage.local with the other workspace
+// lists (see api.js); switching goes through the background worker
+// (SWITCH_ACCOUNT), which restores that account's last-used picks and refreshes
+// the pickers.
 
 const $ = (id) => document.getElementById(id)
 
@@ -17,7 +16,7 @@ function hostOf(url) {
 }
 
 async function render() {
-  const cfg = await chrome.storage.sync.get({enabled: true, baseUrl: DEFAULT_BASE_URL, token: "", team: "", accounts: [], accountId: ""})
+  const cfg = await loadConfig({enabled: true, baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: ""}, {accounts: []})
   $("enabled").checked = cfg.enabled
 
   // The review bar flag lives in storage.local with the review session itself.

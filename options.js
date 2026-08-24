@@ -9,22 +9,6 @@
 // options.html): the workspace URL is typed by hand here, so most of what
 // answers a first "Connect" is something other than the workspace.
 
-// Keep in sync with background.js — Amplifier's hosted workspace, prefilled so
-// a fresh install only has to paste a token.
-const DEFAULT_BASE_URL = "https://amplifier.app"
-
-const DEFAULTS = {
-  enabled: true,
-  baseUrl: DEFAULT_BASE_URL,
-  token: "",
-  accountId: "",
-  team: "",
-  teams: [],
-  projects: [],
-  labels: [],
-  moodBoards: []
-}
-
 const $ = (id) => document.getElementById(id)
 
 function setStatus(text, kind = "") {
@@ -46,7 +30,7 @@ function populateTeams(teams, selected) {
 }
 
 async function restore() {
-  const cfg = await chrome.storage.sync.get(DEFAULTS)
+  const cfg = await loadConfig(SETTING_DEFAULTS, {teams: []})
   $("enabled").checked = cfg.enabled
   $("baseUrl").value = cfg.baseUrl
   $("token").value = cfg.token
@@ -155,7 +139,9 @@ async function connectAndSave() {
   await chrome.storage.sync.set({
     ...form,
     team: $("team").value,
-    accountId: data.account_id != null ? String(data.account_id) : "",
+    accountId: data.account_id != null ? String(data.account_id) : ""
+  })
+  const cached = await saveWorkspaceCache({
     accounts: data.accounts || [],
     teams: data.teams || [],
     projects: data.projects || [],
@@ -165,8 +151,11 @@ async function connectAndSave() {
   const others = (data.accounts || []).length - 1
   setStatus(
     `Connected to “${data.account}” as ${data.user}. ${(data.teams || []).length} team(s), ${(data.projects || []).length} project(s), ${(data.labels || []).length} label(s), ${(data.mood_boards || []).length} mood board(s) loaded.` +
-      (others > 0 ? ` ${others} other account(s) available from the composer's Account picker.` : ""),
-    "ok"
+      (others > 0 ? ` ${others} other account(s) available from the composer's Account picker.` : "") +
+      // Connected either way — the pickers refetch — but don't claim a cache
+      // that isn't there.
+      (cached.ok ? "" : ` ${cached.error}`),
+    cached.ok ? "ok" : "warn"
   )
 }
 

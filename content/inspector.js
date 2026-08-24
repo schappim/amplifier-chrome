@@ -50,7 +50,14 @@
   const OUTLINE_CLASS = "sci-hover-outline"
   const MAX_CAPTURES = 25 // keep in sync with the server's cap
 
-  let config = {enabled: true, baseUrl: "", token: "", accountId: "", accounts: [], team: "", teams: [], projects: [], labels: [], moodBoards: [], lastProject: "", lastLabel: ""}
+  // Settings (chrome.storage.sync) and the cached workspace lists
+  // (chrome.storage.local), kept apart because sync caps each item at 8KB and
+  // the lists outgrow it — api.js has the long version. Content scripts each
+  // run in their own scope in the isolated world, so the split is spelled out
+  // here rather than shared with api.js; keep the two in step.
+  const SETTING_DEFAULTS = {enabled: true, baseUrl: "", token: "", accountId: "", team: "", lastProject: "", lastLabel: ""}
+  const CACHE_DEFAULTS = {accounts: [], teams: [], projects: [], labels: [], moodBoards: []}
+  let config = {...SETTING_DEFAULTS, ...CACHE_DEFAULTS}
   let hovered = null
   // Fetch the mood-board list once per panel session (reset when the panel is
   // dismissed), so opening the composer shows fresh boards without refetching on
@@ -97,13 +104,13 @@
   function loadConfig() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.sync.get(
-          {enabled: true, baseUrl: "", token: "", accountId: "", accounts: [], team: "", teams: [], projects: [], labels: [], moodBoards: [], lastProject: "", lastLabel: ""},
-          (stored) => {
-            config = stored || config
-            resolve(config)
-          }
-        )
+        let pending = 2
+        const merge = (stored) => {
+          config = {...config, ...(stored || {})}
+          if (--pending === 0) resolve(config)
+        }
+        chrome.storage.sync.get(SETTING_DEFAULTS, merge)
+        chrome.storage.local.get(CACHE_DEFAULTS, merge)
       } catch (_e) {
         resolve(config)
       }
@@ -112,10 +119,17 @@
 
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area === "sync") {
-      for (const [key, {newValue}] of Object.entries(changes)) config[key] = newValue
+      for (const [key, {newValue}] of Object.entries(changes)) {
+        if (key in SETTING_DEFAULTS) config[key] = newValue
+      }
       return
     }
     if (area !== "local") return
+    // The workspace lists share this area with the capture stack — an account
+    // switch arrives here, so the pickers follow it without a reload.
+    for (const [key, {newValue}] of Object.entries(changes)) {
+      if (key in CACHE_DEFAULTS) config[key] = newValue === undefined ? CACHE_DEFAULTS[key] : newValue
+    }
     if (changes.captures) {
       const next = changes.captures.newValue || []
       // Only react to changes made in another tab (ours already updated `stack`
@@ -204,7 +218,7 @@
   // Those land a network round-trip after the panel opens, by which point the
   // instruction box already holds the caret (we put it there). Treating that as
   // "typing" would skip the rebuild for the whole session and strand the team /
-  // project / label / board pickers on whatever chrome.storage.sync last cached.
+  // project / label / board pickers on whatever chrome.storage.local last cached.
   // An empty, freshly-focused instruction box has nothing to lose from a rebuild,
   // so rebuild and put the caret straight back.
   function renderForRefresh() {

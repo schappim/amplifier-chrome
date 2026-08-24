@@ -110,5 +110,95 @@ async function apiCall(url, init) {
   return {ok: false, error: data.error || `Request failed (HTTP ${status})`}
 }
 
-// The options page loads this file with a <script> tag (globals); the service
-// worker loads it with importScripts (also globals). Nothing to export.
+// ── Storage layout: settings sync, workspace lists don't ─────────────
+//
+// chrome.storage.sync caps EACH item at 8KB (QUOTA_BYTES_PER_ITEM) and a set()
+// that breaches it rejects with "Resource::kQuotaBytesPerItem quota exceeded".
+// Switching accounts used to do exactly that: it cached the workspace's
+// project, label, mood-board and account lists into sync, and any workspace
+// with real content outgrows 8KB of JSON. The switch then half-applied — the
+// new accountId landed, the pickers stayed empty — and the failure only existed
+// as an uncaught promise in the console.
+//
+// So the two kinds of data live in the area that suits them:
+//
+//   sync  — the settings. A handful of short strings the user chose, worth
+//           carrying to their other machines.
+//   local — the workspace lists. A cache of what the server just said, tied to
+//           this machine's selected account, refetched whenever a panel opens.
+//           Nothing about them wants syncing, and local has room (the manifest
+//           also asks for `unlimitedStorage`).
+// Where issues are filed unless the user points the extension somewhere else in
+// Settings. Amplifier's hosted workspace is the default so a fresh install only
+// has to paste a token; self-hosters overwrite it with their own base URL. It
+// lives here because every context that reads a base URL already loads api.js.
+const DEFAULT_BASE_URL = "https://amplifier.app"
+
+const SETTING_DEFAULTS = {
+  enabled: true,
+  baseUrl: DEFAULT_BASE_URL,
+  token: "",
+  accountId: "",
+  team: "",
+  lastProject: "",
+  lastLabel: "",
+  lastUsed: {}
+}
+
+const WORKSPACE_CACHE_DEFAULTS = {
+  accounts: [],
+  teams: [],
+  projects: [],
+  labels: [],
+  moodBoards: []
+}
+
+const WORKSPACE_CACHE_KEYS = Object.keys(WORKSPACE_CACHE_DEFAULTS)
+
+// Write the cached lists. Never rejects: a cache that can't be written is worth
+// a warning, not a failed account switch — every panel refetches these anyway.
+async function saveWorkspaceCache(values) {
+  try {
+    await chrome.storage.local.set(values)
+    return {ok: true}
+  } catch (e) {
+    return {ok: false, error: `Could not cache the workspace lists: ${e.message}`}
+  }
+}
+
+// Read the settings and the cached lists as one object, the way every panel
+// wants them. Pass narrower defaults to read a subset.
+async function loadConfig(settingDefaults = SETTING_DEFAULTS, cacheDefaults = WORKSPACE_CACHE_DEFAULTS) {
+  const [settings, cache] = await Promise.all([
+    chrome.storage.sync.get(settingDefaults),
+    chrome.storage.local.get(cacheDefaults)
+  ])
+  return {...settings, ...cache}
+}
+
+// Move any lists left in sync by an older version (<= 1.9.2) over to local and
+// clear them out of sync — both to stop the quota error and to give back the
+// sync space they were occupying. Idempotent, and it never clobbers a fresher
+// local cache: a key already in local wins.
+async function migrateWorkspaceCache() {
+  try {
+    const stale = await chrome.storage.sync.get(WORKSPACE_CACHE_KEYS)
+    const present = Object.keys(stale)
+    if (!present.length) return
+
+    const local = await chrome.storage.local.get(WORKSPACE_CACHE_KEYS)
+    const adopt = {}
+    for (const key of present) {
+      if (local[key] === undefined) adopt[key] = stale[key]
+    }
+    if (Object.keys(adopt).length) await chrome.storage.local.set(adopt)
+    await chrome.storage.sync.remove(present)
+  } catch (_e) {
+    /* best effort — the lists refetch regardless */
+  }
+}
+
+// The options page and the popup load this file with a <script> tag (globals);
+// the service worker loads it with importScripts (also globals). The content
+// scripts get their own copy of the split (they run in the page's isolated
+// world, where these bindings aren't visible) — keep the two in step.

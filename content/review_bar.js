@@ -61,17 +61,26 @@
 
   let review = {active: false, startedAt: null, items: [], draft: {}}
 
-  // Workspace connection + picker data, shared with the issue filer via
-  // chrome.storage.sync (the options page writes it on Connect & save).
-  let config = {baseUrl: "", token: "", accountId: "", accounts: [], team: "", teams: [], projects: [], labels: [], lastProject: "", lastLabel: ""}
+  // Workspace connection + picker data, shared with the issue filer through
+  // chrome.storage (the options page writes it on Connect & save). Settings go
+  // in sync; the workspace lists go in local, because sync caps each item at
+  // 8KB and the lists outgrow it — api.js has the long version. Content scripts
+  // each run in their own scope in the isolated world, so the split is spelled
+  // out here rather than shared with api.js; keep the two in step.
+  const SETTING_DEFAULTS = {baseUrl: "", token: "", accountId: "", team: "", lastProject: "", lastLabel: ""}
+  const CACHE_DEFAULTS = {accounts: [], teams: [], projects: [], labels: []}
+  let config = {...SETTING_DEFAULTS, ...CACHE_DEFAULTS}
 
   function loadConfig() {
     return new Promise((resolve) => {
       try {
-        chrome.storage.sync.get(config, (stored) => {
-          config = stored || config
-          resolve(config)
-        })
+        let pending = 2
+        const merge = (stored) => {
+          config = {...config, ...(stored || {})}
+          if (--pending === 0) resolve(config)
+        }
+        chrome.storage.sync.get(SETTING_DEFAULTS, merge)
+        chrome.storage.local.get(CACHE_DEFAULTS, merge)
       } catch (_e) {
         resolve(config)
       }
@@ -229,11 +238,16 @@
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area === "sync") {
       for (const [key, {newValue}] of Object.entries(changes)) {
-        if (key in config) config[key] = newValue
+        if (key in SETTING_DEFAULTS) config[key] = newValue
       }
       return
     }
     if (area !== "local") return
+    // The workspace lists share this area with the review session — an account
+    // switch arrives here, so the pickers follow it without a reload.
+    for (const [key, {newValue}] of Object.entries(changes)) {
+      if (key in CACHE_DEFAULTS) config[key] = newValue === undefined ? CACHE_DEFAULTS[key] : newValue
+    }
     if (changes.reviewActive) {
       const next = Boolean(changes.reviewActive.newValue)
       if (next !== review.active) {

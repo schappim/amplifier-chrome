@@ -1,6 +1,6 @@
 // The URL and response rules in api.js, on their own. Run with:
 //
-//   node extensions/chrome/test/api_test.mjs
+//   node test/api_test.mjs
 import fs from "fs"
 import vm from "vm"
 import path from "path"
