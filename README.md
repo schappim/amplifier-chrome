@@ -132,6 +132,12 @@ confirm you grabbed the right thing. Leave **Title** blank and the AI names the
 issue for you. **Team**, **Project** and **Label** route it. Toggle the whole
 thing on/off from the popup or with **Alt+Shift+I**.
 
+A project belongs to exactly one team, so **picking a project sets the team** —
+the team picker follows it, and choosing a different team drops a project that
+belongs elsewhere. The worker derives the team from the project one last time as
+it files, so an issue can never be keyed to one team while carrying another
+team's project.
+
 Filing also puts the issue's **prompt on your clipboard** and plays a short
 chime — the same text the issue page's **Copy as prompt** produces, rendered
 through your workspace's default Issue template with absolute image URLs. So the

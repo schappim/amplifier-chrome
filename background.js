@@ -272,8 +272,20 @@ async function chooseDesktopMedia(sender) {
   })
 }
 
+// A project belongs to exactly one team, so a chosen project decides the team
+// the issue is filed into. The composer keeps its two pickers in step, but a
+// draft restored from storage — or an older content script — can still hand us
+// a team the project doesn't belong to, and the server files an issue into
+// whatever team it is told. This is the last place we can stop an issue being
+// keyed to one team while carrying another team's project.
+function teamForProject(projectId, projects) {
+  if (!projectId) return ""
+  const project = (projects || []).find((p) => String(p.id) === String(projectId))
+  return (project && project.team) || ""
+}
+
 async function createIssue(payload) {
-  const {baseUrl, token, team, accountId} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: ""})
+  const {baseUrl, token, team, accountId, projects} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: "", projects: []})
   if (!baseUrl || !token) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
@@ -289,7 +301,8 @@ async function createIssue(payload) {
       account_id: accountId || null,
       title: payload.title,
       note: payload.note || null, // the user's free-text instruction for the AI
-      team: payload.team || team || "",
+      // The project outranks whatever team the caller sent.
+      team: teamForProject(payload.project, projects) || payload.team || team || "",
       project: payload.project || null,
       label: payload.label || null,
       // Ask for the filed issue rendered as a prompt, so the composer can put
@@ -308,7 +321,11 @@ async function createIssue(payload) {
   // Remember where this issue was filed — team, project and label — so the
   // composer preselects the same next time (including an explicit
   // "No project" / "No label").
-  await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
+  await rememberLastUsed({
+    team: teamForProject(payload.project, projects) || payload.team || team,
+    project: payload.project,
+    label: payload.label
+  })
   const data = result.data
   return {ok: true, identifier: data.identifier, url: data.url, prompt: data.prompt || null}
 }
@@ -318,7 +335,7 @@ async function createIssue(payload) {
 // connected Claude Code session via the channel. The response's `sent` flag
 // tells the bar whether a channel actually received it.
 async function sendReview(payload) {
-  const {baseUrl, token, team, accountId} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: ""})
+  const {baseUrl, token, team, accountId, projects} = await chrome.storage.sync.get({baseUrl: DEFAULT_BASE_URL, token: "", team: "", accountId: "", projects: []})
   if (!baseUrl || !token) {
     return {ok: false, error: "Extension not configured — set the app URL and API token in settings."}
   }
@@ -334,7 +351,8 @@ async function sendReview(payload) {
       account_id: accountId || null,
       title: payload.title || null,
       note: payload.note || null,
-      team: payload.team || team || "",
+      // The project outranks whatever team the caller sent.
+      team: teamForProject(payload.project, projects) || payload.team || team || "",
       project: payload.project || null,
       label: payload.label || null,
       send_to_claude: payload.sendToClaude !== false,
@@ -347,7 +365,11 @@ async function sendReview(payload) {
   if (!result.ok) return result
 
   // Remember the team/project/label for next time, like the issue composer.
-  await rememberLastUsed({team: payload.team || team, project: payload.project, label: payload.label})
+  await rememberLastUsed({
+    team: teamForProject(payload.project, projects) || payload.team || team,
+    project: payload.project,
+    label: payload.label
+  })
   const data = result.data
   return {ok: true, identifier: data.identifier, url: data.url, sent: Boolean(data.sent), prompt: data.prompt || null}
 }

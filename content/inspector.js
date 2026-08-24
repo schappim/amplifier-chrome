@@ -891,6 +891,24 @@
     return ((config.teams || [])[0] && (config.teams || [])[0].key) || ""
   }
 
+  // The project picker's value, defaulting to the project we last filed into.
+  // An untouched draft has no `project` key at all, which is how "no project"
+  // and "not chosen yet" stay distinguishable.
+  function effectiveProject() {
+    return stack.draft.project !== undefined ? stack.draft.project : (config.lastProject || "")
+  }
+
+  // A project belongs to exactly one team, so whenever a project is chosen it
+  // is the project that decides the team — never the other way round. Leaving
+  // the two pickers independent filed an "STR · Getting Started" issue into
+  // HOM, because the untouched team picker sent nothing and the server fell
+  // back to the workspace's first team.
+  function teamForProject(projectId) {
+    if (!projectId) return ""
+    const project = (config.projects || []).find((p) => String(p.id) === String(projectId))
+    return (project && project.team) || ""
+  }
+
   function labelsForTeam(teamKey) {
     return (config.labels || []).filter((label) => !label.team || !teamKey || label.team === teamKey)
   }
@@ -947,12 +965,13 @@
     // issue for free. Once the user gives the title its own text `titleEdited`
     // detaches it; emptying the title re-attaches it (see the input handlers).
     const draftTitle = stack.draft.titleEdited ? (stack.draft.title || "") : draftNote
-    const draftTeam = stack.draft.team || config.team || ""
     // Default to the project of the last issue we filed; once the user touches
     // the picker their explicit choice (including "No project") lives on the
     // draft and wins. An empty draft (fresh, or just after filing) has no
     // `project` key, so we fall through to the remembered last project.
-    const draftProject = stack.draft.project !== undefined ? stack.draft.project : (config.lastProject || "")
+    const draftProject = effectiveProject()
+    // Resolved after the project on purpose: a chosen project owns the team.
+    const draftTeam = teamForProject(draftProject) || stack.draft.team || config.team || ""
     // The label defaults to the last one filed with, the same way the project
     // does; a touched picker (including "No label") lives on the draft and wins.
     const draftLabel = stack.draft.label !== undefined ? stack.draft.label : (config.lastLabel || "")
@@ -989,8 +1008,11 @@
           .map((a) => `<option value="${escapeAttr(String(a.id))}"${String(a.id) === String(config.accountId) ? " selected" : ""}>${escapeHtml(a.name)}</option>`)
           .join("")
       : ""
+    // Selected against the EFFECTIVE team, not the raw draft: with no team
+    // chosen the browser used to show the first team while the draft held ""
+    // — the picker said one thing and the filed issue did another.
     const teamOptions = (config.teams || [])
-      .map((t) => `<option value="${escapeAttr(t.key)}"${t.key === draftTeam ? " selected" : ""}>${escapeHtml(t.key)} — ${escapeHtml(t.name)}</option>`)
+      .map((t) => `<option value="${escapeAttr(t.key)}"${t.key === effectiveTeam ? " selected" : ""}>${escapeHtml(t.key)} — ${escapeHtml(t.name)}</option>`)
       .join("")
     const projectOptions = [`<option value=""${draftProject === "" ? " selected" : ""}>No project</option>`]
       .concat(
@@ -1169,6 +1191,11 @@
       teamSelect.addEventListener("change", () => {
         stack.draft.team = teamSelect.value
         const teamKey = teamSelect.value || firstTeamKey()
+        // Moving to another team abandons a project that belongs to the one we
+        // just left — keeping it would file the issue into one team carrying
+        // another team's project.
+        const projectTeam = teamForProject(effectiveProject())
+        if (projectTeam && projectTeam !== teamKey) stack.draft.project = ""
         if (!labelsForTeam(teamKey).some((label) => String(label.id) === String(stack.draft.label))) {
           stack.draft.label = ""
         }
@@ -1179,7 +1206,17 @@
     if (projectSelect) {
       projectSelect.addEventListener("change", () => {
         stack.draft.project = projectSelect.value
+        // Adopt the project's team, and drop a label belonging to the team we
+        // just left. Re-rendering makes the team picker show the move.
+        const teamKey = teamForProject(projectSelect.value)
+        if (teamKey) {
+          stack.draft.team = teamKey
+          if (!labelsForTeam(teamKey).some((label) => String(label.id) === String(stack.draft.label))) {
+            stack.draft.label = ""
+          }
+        }
         saveDraft()
+        renderPanel()
       })
     }
     if (labelSelect) {
@@ -1334,13 +1371,20 @@
     msg.className = "msg"
     msg.textContent = "Filing…"
 
+    // The project has the final word on the team. The pickers are kept in step
+    // above, but a draft restored from storage can still pair a project with a
+    // team it doesn't belong to, and that must never reach the server.
+    const chosenProject = projectSelect ? projectSelect.value : effectiveProject()
+    const chosenTeam =
+      teamForProject(chosenProject) || (teamSelect ? teamSelect.value : stack.draft.team || config.team || "")
+
     const res = await sendMessage({
       type: "CREATE_ISSUE",
       payload: {
         title: finalTitle,
         note: noteInput ? noteInput.value.trim() : stack.draft.note || "",
-        team: teamSelect ? teamSelect.value : stack.draft.team || config.team || "",
-        project: projectSelect ? projectSelect.value : stack.draft.project || "",
+        team: chosenTeam,
+        project: chosenProject,
         label: labelSelect ? labelSelect.value : stack.draft.label || "",
         // Ask for the filed issue rendered through the workspace's default Issue
         // prompt template, so it can go straight on the clipboard below.
